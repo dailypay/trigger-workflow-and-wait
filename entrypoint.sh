@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
 set -e
 
+# Assuming INPUT_DEBUG_MODE is passed in from action.yml and environment
+debug_mode=${INPUT_DEBUG_MODE:-false} # Defaults to false if not specified
+
+log_debug() {
+  if [ "$debug_mode" = "true" ]; then
+    echo >&2 "$@"
+  fi
+}
+
 usage_docs() {
   echo ""
   echo "You can use this Github Action with:"
@@ -15,6 +24,7 @@ GITHUB_API_URL="${API_URL:-https://api.github.com}"
 GITHUB_SERVER_URL="${SERVER_URL:-https://github.com}"
 
 validate_args() {
+  log_debug "Validating input arguments..."
   wait_interval=10 # Waits for 10 seconds
   if [ "${INPUT_WAIT_INTERVAL}" ]
   then
@@ -83,12 +93,14 @@ validate_args() {
 }
 
 lets_wait() {
-  echo "Sleeping for ${wait_interval} seconds"
-  sleep "$wait_interval"
+  local interval=${1:-$wait_interval}
+  log_debug "Sleeping for $interval seconds"
+  sleep "$interval"
 }
 
 api() {
   path=$1; shift
+  log_debug "Making API call to: $path"
   if response=$(curl --fail-with-body -sSL \
       "${GITHUB_API_URL}/repos/${INPUT_OWNER}/${INPUT_REPO}/actions/$path" \
       -H "Authorization: Bearer ${INPUT_GITHUB_TOKEN}" \
@@ -111,13 +123,14 @@ api() {
 
 lets_wait() {
   local interval=${1:-$wait_interval}
-  echo >&2 "Sleeping for $interval seconds"
+  log_debug "Sleeping for $interval seconds"
   sleep "$interval"
 }
 
 # Return the ids of the most recent workflow runs, optionally filtered by user
 get_workflow_runs() {
   since=${1:?}
+  log_debug "Making API call to: $path"
 
   query="event=workflow_dispatch&created=>=$since${INPUT_GITHUB_USER+&actor=}${INPUT_GITHUB_USER}&per_page=100"
 
@@ -129,6 +142,11 @@ get_workflow_runs() {
 }
 
 trigger_workflow() {
+  log_debug "Triggering workflow..."
+  local unique_id=$(date +%s%N) # Use current time in nanoseconds as a unique identifier
+
+  # Include the unique_id in the client_payload to distinguish each workflow run
+  client_payload=$(echo "{}" | jq --arg uid "$unique_id" '. + {unique_id: $uid}')
   START_TIME=$(date +%s)
   SINCE=$(date -u -Iseconds -d "@$((START_TIME - 120))") # Two minutes ago, to overcome clock skew
 
@@ -153,6 +171,7 @@ trigger_workflow() {
 }
 
 comment_downstream_link() {
+  log_debug "Commenting downstream link..."
   if response=$(curl --fail-with-body -sSL -X POST \
       "${INPUT_COMMENT_DOWNSTREAM_URL}" \
       -H "Authorization: Bearer ${INPUT_COMMENT_GITHUB_TOKEN}" \
@@ -166,6 +185,7 @@ comment_downstream_link() {
 }
 
 wait_for_workflow_to_finish() {
+  log_debug "Waiting for workflow to finish: $last_workflow_id"
   last_workflow_id=${1:?}
   last_workflow_url="${GITHUB_SERVER_URL}/${INPUT_OWNER}/${INPUT_REPO}/actions/runs/${last_workflow_id}"
 
@@ -212,19 +232,18 @@ wait_for_workflow_to_finish() {
 }
 
 main() {
+  log_debug "Starting main function..."
   validate_args
 
-  if [ "${trigger_workflow}" = true ]
-  then
+  if [ "${trigger_workflow}" = true ]; then
     run_ids=$(trigger_workflow)
+    echo "Triggered workflow runs with IDs: $run_ids"
   else
     echo "Skipping triggering the workflow."
   fi
 
-  if [ "${wait_workflow}" = true ]
-  then
-    for run_id in $run_ids
-    do
+  if [ "${wait_workflow}" = true ]; then
+    for run_id in $run_ids; do
       wait_for_workflow_to_finish "$run_id"
     done
   else
