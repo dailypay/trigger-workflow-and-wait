@@ -46,10 +46,10 @@ inputs:
     description: "The Github access token with access to the repository for comment URL. It is recommended you put this token under secrets."
     required: false
     default: ${{ github.token }}
-  debug_mode:
-    description: 'Enable debug mode for verbose logging. Default: false'
+  run_name:
+    description: "filter job by run name, for example: 'build' or 'test' or 'deploy' etc."
     required: false
-    default: 'false'
+  
 outputs:
   workflow_id:
     description: The ID of the workflow that was triggered by this action

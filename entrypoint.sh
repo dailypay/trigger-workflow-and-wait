@@ -1,17 +1,6 @@
 #!/usr/bin/env bash
 set -e
 
-# Generate a unique ID
-UNIQUE_ID=$(date +%s%N)
-
-debug_mode=${INPUT_DEBUG_MODE:-false} # Defaults to false if not specified
-
-log_debug() {
-  if [ "$debug_mode" = "true" ]; then
-    echo >&2 "$@"
-  fi
-}
-
 usage_docs() {
   echo ""
   echo "You can use this Github Action with:"
@@ -26,7 +15,6 @@ GITHUB_API_URL="${API_URL:-https://api.github.com}"
 GITHUB_SERVER_URL="${SERVER_URL:-https://github.com}"
 
 validate_args() {
-  log_debug "Validating input arguments..."
   wait_interval=10 # Waits for 10 seconds
   if [ "${INPUT_WAIT_INTERVAL}" ]
   then
@@ -95,14 +83,12 @@ validate_args() {
 }
 
 lets_wait() {
-  local interval=${1:-$wait_interval}
-  log_debug "Sleeping for $interval seconds"
-  sleep "$interval"
+  echo "Sleeping for ${wait_interval} seconds"
+  sleep "$wait_interval"
 }
 
 api() {
   path=$1; shift
-  log_debug "Making API call to: $path"
   if response=$(curl --fail-with-body -sSL \
       "${GITHUB_API_URL}/repos/${INPUT_OWNER}/${INPUT_REPO}/actions/$path" \
       -H "Authorization: Bearer ${INPUT_GITHUB_TOKEN}" \
@@ -125,31 +111,25 @@ api() {
 
 lets_wait() {
   local interval=${1:-$wait_interval}
-  log_debug "Sleeping for $interval seconds"
+  echo >&2 "Sleeping for $interval seconds"
   sleep "$interval"
 }
 
 # Return the ids of the most recent workflow runs, optionally filtered by user
 get_workflow_runs() {
   since=${1:?}
-  unique_id=${UNIQUE_ID:?}
-  log_debug "Making API call to: $path"
+  run_name=${2:?}
 
-  query="event=workflow_dispatch&created=>=$since${INPUT_GITHUB_USER+&actor=}${INPUT_GITHUB_USER}&unique_id=$unique_id&per_page=100"
+  query="event=workflow_dispatch&created=>=$since&per_page=100"
 
-  echo "Getting workflow runs using query: ${query}" >&2
+  echo "Getting workflow runs using query: ${query}, filtering by tags: ${run_name}" >&2
 
   api "workflows/${INPUT_WORKFLOW_FILE_NAME}/runs?${query}" |
-  jq -r '.workflow_runs[] | select(.inputs.unique_id == "$unique_id") | .id' |
-  sort # Sort to ensure repeatable order, and lexicographically for compatibility with join
+  jq --arg run_name "$run_name" -r '.workflow_runs[] | select(.name | contains($run_name))) | .id' |
+  sort
 }
 
 trigger_workflow() {
-  log_debug "Triggering workflow..."
-  local unique_id=$(date +%s%N) # Use current time in nanoseconds as a unique identifier
-
-  # Include the unique_id in the client_payload to distinguish each workflow run
-  client_payload=$(echo "{}" | jq --arg uid "$unique_id" '. + {unique_id: $uid}')
   START_TIME=$(date +%s)
   SINCE=$(date -u -Iseconds -d "@$((START_TIME - 120))") # Two minutes ago, to overcome clock skew
 
@@ -174,7 +154,6 @@ trigger_workflow() {
 }
 
 comment_downstream_link() {
-  log_debug "Commenting downstream link..."
   if response=$(curl --fail-with-body -sSL -X POST \
       "${INPUT_COMMENT_DOWNSTREAM_URL}" \
       -H "Authorization: Bearer ${INPUT_COMMENT_GITHUB_TOKEN}" \
@@ -188,65 +167,58 @@ comment_downstream_link() {
 }
 
 wait_for_workflow_to_finish() {
-  log_debug "Waiting for workflow to finish: $last_workflow_id"
-  last_workflow_id=${1:?}
-  last_workflow_url="${GITHUB_SERVER_URL}/${INPUT_OWNER}/${INPUT_REPO}/actions/runs/${last_workflow_id}"
+  test_tags=${1:?}
 
-  echo "Waiting for workflow to finish:"
-  echo "The workflow id is [${last_workflow_id}]."
-  echo "The workflow logs can be found at ${last_workflow_url}"
-  echo "workflow_id=${last_workflow_id}" >> $GITHUB_OUTPUT
-  echo "workflow_url=${last_workflow_url}" >> $GITHUB_OUTPUT
-  echo ""
+  echo "Waiting for workflow with tags ${test_tags} to finish"
 
-  if [ -n "${INPUT_COMMENT_DOWNSTREAM_URL}" ]; then
-    comment_downstream_link ${last_workflow_url}
-  fi
+  START_TIME=$(date +%s)
+  SINCE=$(date -u -Iseconds -d "@$((START_TIME - 120))") # To account for clock skew
 
-  conclusion=null
-  status=
-
-  while [[ "${conclusion}" == "null" && "${status}" != "completed" ]]
-  do
+  match_found=false
+  while [ "$match_found" = false ]; do
     lets_wait
+    RUN_IDS=$(get_workflow_runs "$SINCE" "$run_name")
 
-    workflow=$(api "runs/$last_workflow_id")
-    conclusion=$(echo "${workflow}" | jq -r '.conclusion')
-    status=$(echo "${workflow}" | jq -r '.status')
+    for run_id in $RUN_IDS; do
+      if [ ! -z "$run_id" ]; then
+        match_found=true
+        workflow=$(api "runs/$run_id")
+        conclusion=$(echo "${workflow}" | jq -r '.conclusion')
+        status=$(echo "${workflow}" | jq -r '.status')
 
-    echo "Checking conclusion [${conclusion}]"
-    echo "Checking status [${status}]"
-    echo "conclusion=${conclusion}" >> $GITHUB_OUTPUT
+        echo "Checking run_id [${run_id}] conclusion [${conclusion}] status [${status}]"
+
+        if [[ "${conclusion}" == "success" && "${status}" == "completed" ]]; then
+          echo "Workflow completed successfully."
+          break
+        elif [[ "${status}" == "completed" ]]; then
+          echo "Workflow finished with conclusion [${conclusion}]."
+          break
+        fi
+      fi
+    done
   done
 
-  if [[ "${conclusion}" == "success" && "${status}" == "completed" ]]
-  then
-    echo "Yes, success"
-  else
-    # Alternative "failure"
-    echo "Conclusion is not success, it's [${conclusion}]."
-
-    if [ "${propagate_failure}" = true ]
-    then
-      echo "Propagating failure to upstream job"
-      exit 1
-    fi
+  if [ "$match_found" = false ]; then
+    echo "No matching workflow run found for tags ${run_name}"
+    exit 1
   fi
 }
 
 main() {
-  log_debug "Starting main function..."
   validate_args
 
-  if [ "${trigger_workflow}" = true ]; then
+  if [ "${trigger_workflow}" = true ]
+  then
     run_ids=$(trigger_workflow)
-    echo "Triggered workflow runs with IDs: $run_ids"
   else
     echo "Skipping triggering the workflow."
   fi
 
-  if [ "${wait_workflow}" = true ]; then
-    for run_id in $run_ids; do
+  if [ "${wait_workflow}" = true ]
+  then
+    for run_id in $run_ids
+    do
       wait_for_workflow_to_finish "$run_id"
     done
   else
