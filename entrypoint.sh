@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 set -e
 
-# Assuming INPUT_DEBUG_MODE is passed in from action.yml and environment
+# Generate a unique ID
+UNIQUE_ID=$(date +%s%N)
+
 debug_mode=${INPUT_DEBUG_MODE:-false} # Defaults to false if not specified
 
 log_debug() {
@@ -130,14 +132,15 @@ lets_wait() {
 # Return the ids of the most recent workflow runs, optionally filtered by user
 get_workflow_runs() {
   since=${1:?}
+  unique_id=${UNIQUE_ID:?}
   log_debug "Making API call to: $path"
 
-  query="event=workflow_dispatch&created=>=$since${INPUT_GITHUB_USER+&actor=}${INPUT_GITHUB_USER}&per_page=100"
+  query="event=workflow_dispatch&created=>=$since${INPUT_GITHUB_USER+&actor=}${INPUT_GITHUB_USER}&unique_id=$unique_id&per_page=100"
 
   echo "Getting workflow runs using query: ${query}" >&2
 
   api "workflows/${INPUT_WORKFLOW_FILE_NAME}/runs?${query}" |
-  jq -r '.workflow_runs[].id' |
+  jq -r '.workflow_runs[] | select(.inputs.unique_id == "$unique_id") | .id' |
   sort # Sort to ensure repeatable order, and lexicographically for compatibility with join
 }
 
