@@ -123,7 +123,10 @@ get_workflow_runs() {
 
   echo "Getting workflow runs using query: ${query}" >&2
 
-  api "workflows/${INPUT_WORKFLOW_FILE_NAME}/runs?${query}" |
+  response=$(api "workflows/${INPUT_WORKFLOW_FILE_NAME}/runs?${query}")
+  echo "API response: $response" >&2
+
+  echo "$response" |
   jq -r --arg display_title "@${INPUT_DISPLAY_NAME}" '.workflow_runs[] | select(.display_title | contains($display_title)) | .id'
   sort # Sort to ensure repeatable order, and lexicographically for compatibility with join
 }
