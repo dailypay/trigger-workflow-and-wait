@@ -167,9 +167,9 @@ comment_downstream_link() {
 }
 
 wait_for_workflow_to_finish() {
-  test_tags=${1:?}
+  run_name=${1:?}
 
-  echo "Waiting for workflow with tags ${test_tags} to finish"
+  echo "Waiting for workflow with tags ${run_name} to finish"
 
   START_TIME=$(date +%s)
   SINCE=$(date -u -Iseconds -d "@$((START_TIME - 120))") # To account for clock skew
