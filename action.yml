@@ -46,8 +46,8 @@ inputs:
     description: "The Github access token with access to the repository for comment URL. It is recommended you put this token under secrets."
     required: false
     default: ${{ github.token }}
-  run_name:
-    description: "filter job by run name, for example: 'build' or 'test' or 'deploy' etc."
+  display_name:
+    description: "filter job by display name, for example: 'build' or 'test' or 'deploy' etc."
     required: false
   
 outputs:

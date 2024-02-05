@@ -118,15 +118,14 @@ lets_wait() {
 # Return the ids of the most recent workflow runs, optionally filtered by user
 get_workflow_runs() {
   since=${1:?}
-  run_name=${2:?}
 
-  query="event=workflow_dispatch&created=>=$since&per_page=100"
+  query="event=workflow_dispatch&created=>=$since${INPUT_GITHUB_USER+&actor=}${INPUT_GITHUB_USER}&per_page=100"
 
-  echo "Getting workflow runs using query: ${query}, filtering by tags: ${run_name}" >&2
+  echo "Getting workflow runs using query: ${query}" >&2
 
   api "workflows/${INPUT_WORKFLOW_FILE_NAME}/runs?${query}" |
-  jq --arg run_name "$run_name" -r '.workflow_runs[] | select(.name | contains($run_name))) | .id' |
-  sort
+  jq -r --arg display_title "@${INPUT_DISPLAY_NAME}" '.workflow_runs[] | select(.display_title | contains($display_title)) | .id'
+  sort # Sort to ensure repeatable order, and lexicographically for compatibility with join
 }
 
 trigger_workflow() {
@@ -167,41 +166,48 @@ comment_downstream_link() {
 }
 
 wait_for_workflow_to_finish() {
-  run_name=${1:?}
+  last_workflow_id=${1:?}
+  last_workflow_url="${GITHUB_SERVER_URL}/${INPUT_OWNER}/${INPUT_REPO}/actions/runs/${last_workflow_id}"
 
-  echo "Waiting for workflow with tags ${run_name} to finish"
+  echo "Waiting for workflow to finish:"
+  echo "The workflow id is [${last_workflow_id}]."
+  echo "The workflow logs can be found at ${last_workflow_url}"
+  echo "workflow_id=${last_workflow_id}" >> $GITHUB_OUTPUT
+  echo "workflow_url=${last_workflow_url}" >> $GITHUB_OUTPUT
+  echo ""
 
-  START_TIME=$(date +%s)
-  SINCE=$(date -u -Iseconds -d "@$((START_TIME - 120))") # To account for clock skew
+  if [ -n "${INPUT_COMMENT_DOWNSTREAM_URL}" ]; then
+    comment_downstream_link ${last_workflow_url}
+  fi
 
-  match_found=false
-  while [ "$match_found" = false ]; do
+  conclusion=null
+  status=
+
+  while [[ "${conclusion}" == "null" && "${status}" != "completed" ]]
+  do
     lets_wait
-    RUN_IDS=$(get_workflow_runs "$SINCE" "$run_name")
 
-    for run_id in $RUN_IDS; do
-      if [ ! -z "$run_id" ]; then
-        match_found=true
-        workflow=$(api "runs/$run_id")
-        conclusion=$(echo "${workflow}" | jq -r '.conclusion')
-        status=$(echo "${workflow}" | jq -r '.status')
+    workflow=$(api "runs/$last_workflow_id")
+    conclusion=$(echo "${workflow}" | jq -r '.conclusion')
+    status=$(echo "${workflow}" | jq -r '.status')
 
-        echo "Checking run_id [${run_id}] conclusion [${conclusion}] status [${status}]"
-
-        if [[ "${conclusion}" == "success" && "${status}" == "completed" ]]; then
-          echo "Workflow completed successfully."
-          break
-        elif [[ "${status}" == "completed" ]]; then
-          echo "Workflow finished with conclusion [${conclusion}]."
-          break
-        fi
-      fi
-    done
+    echo "Checking conclusion [${conclusion}]"
+    echo "Checking status [${status}]"
+    echo "conclusion=${conclusion}" >> $GITHUB_OUTPUT
   done
 
-  if [ "$match_found" = false ]; then
-    echo "No matching workflow run found for tags ${run_name}"
-    exit 1
+  if [[ "${conclusion}" == "success" && "${status}" == "completed" ]]
+  then
+    echo "Yes, success"
+  else
+    # Alternative "failure"
+    echo "Conclusion is not success, it's [${conclusion}]."
+
+    if [ "${propagate_failure}" = true ]
+    then
+      echo "Propagating failure to upstream job"
+      exit 1
+    fi
   fi
 }
 
