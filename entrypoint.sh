@@ -123,9 +123,10 @@ get_workflow_runs() {
 
   echo "Getting workflow runs using query: ${query}" >&2
 
-  api "workflows/${INPUT_WORKFLOW_FILE_NAME}/runs?${query}"
-
-jq -r --arg display_title "@${INPUT_DISPLAY_NAME}" '.workflow_runs[] | if $display_title != "@" then select(.display_title | contains($display_title)) else . end | .id' | sort
+  api "workflows/${INPUT_WORKFLOW_FILE_NAME}/runs?${query}" | \
+  jq -r --arg display_title "@${INPUT_DISPLAY_NAME}" '.workflow_runs[] | if $display_title != "@" then select(.display_title | contains($display_title)) else . end | .id' | \
+  tee /dev/fd/2 | \
+  sort
 }
 
 trigger_workflow() {
@@ -148,9 +149,6 @@ trigger_workflow() {
     NEW_RUNS=$(get_workflow_runs "$SINCE")
   done
 
-  # Return new run ids
-  echo "OLD_RUNS: $OLD_RUNS"
-  echo "NEW_RUNS: $NEW_RUNS"
   join -v2 <(echo "$OLD_RUNS") <(echo "$NEW_RUNS")
 }
 
