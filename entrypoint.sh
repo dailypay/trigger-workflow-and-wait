@@ -125,7 +125,7 @@ get_workflow_runs() {
 
   api "workflows/${INPUT_WORKFLOW_FILE_NAME}/runs?${query}"
 
-  jq -r --arg display_title "@${INPUT_DISPLAY_NAME}" '.workflow_runs[] | select(.display_title | contains($display_title)) | .id' | sort # Sort to ensure repeatable order, and lexicographically for compatibility with join
+jq -r --arg display_title "@${INPUT_DISPLAY_NAME}" '.workflow_runs[] | if $display_title != "@" then select(.display_title | contains($display_title)) else . end | .id' | sort
 }
 
 trigger_workflow() {
