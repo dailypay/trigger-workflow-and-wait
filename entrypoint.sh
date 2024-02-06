@@ -149,6 +149,8 @@ trigger_workflow() {
   done
 
   # Return new run ids
+  echo "OLD_RUNS: $OLD_RUNS"
+  echo "NEW_RUNS: $NEW_RUNS"
   join -v2 <(echo "$OLD_RUNS") <(echo "$NEW_RUNS")
 }
 
