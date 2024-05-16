@@ -46,6 +46,10 @@ inputs:
     description: "The Github access token with access to the repository for comment URL. It is recommended you put this token under secrets."
     required: false
     default: ${{ github.token }}
+  display_name:
+    description: "filter job by display name, for example: 'build' or 'test' or 'deploy' etc."
+    required: false
+  
 outputs:
   workflow_id:
     description: The ID of the workflow that was triggered by this action
